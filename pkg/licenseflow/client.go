@@ -18,9 +18,9 @@ type Config struct {
 }
 
 type Client struct {
-	config Config
+	config     Config
 	httpClient *http.Client
-	cache  map[string]interface{}
+	cache      map[string]interface{}
 }
 
 func NewClient(config Config) *Client {
@@ -62,7 +62,7 @@ func (c *Client) Verify(licenseKey string) (map[string]interface{}, error) {
 		"license_key": licenseKey,
 		"device_id":   deviceID,
 	}
-	
+
 	res, err := c.post("functions/v1/verify-license", payload)
 	if err == nil && res["valid"] == true {
 		c.cache[cacheKey] = res
@@ -70,10 +70,22 @@ func (c *Client) Verify(licenseKey string) (map[string]interface{}, error) {
 	return res, err
 }
 
+func (c *Client) Deactivate(licenseKey string) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"license_key": licenseKey,
+		"device_id":   c.GetHardwareID(),
+	}
+	res, err := c.post("functions/v1/deactivate-license", payload)
+	if err == nil {
+		c.cache = make(map[string]interface{}) // Clear cache
+	}
+	return res, err
+}
+
 func (c *Client) post(path string, payload interface{}) (map[string]interface{}, error) {
 	url := fmt.Sprintf("%s/%s", strings.TrimSuffix(c.config.BaseURL, "/"), path)
 	body, _ := json.Marshal(payload)
-	
+
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	req.Header.Set("x-api-key", c.config.APIKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -94,7 +106,7 @@ func (c *Client) post(path string, payload interface{}) (map[string]interface{},
 		} else if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound {
 			code = ErrInvalid
 		}
-		
+
 		msg, _ := result["message"].(string)
 		if msg == "" {
 			msg, _ = result["error"].(string)
