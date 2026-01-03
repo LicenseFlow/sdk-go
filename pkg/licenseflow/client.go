@@ -219,11 +219,12 @@ func (c *Client) post(path string, payload interface{}) (map[string]interface{},
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != 200 && resp.StatusCode != 201 {
+	if resp.StatusCode >= 400 {
 		code := ErrUnknown
-		if resp.StatusCode == http.StatusTooManyRequests {
+		switch resp.StatusCode {
+		case http.StatusTooManyRequests:
 			code = ErrRateLimit
-		} else if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound {
+		case http.StatusBadRequest, http.StatusNotFound:
 			code = ErrInvalid
 		}
 
