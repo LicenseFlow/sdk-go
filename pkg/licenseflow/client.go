@@ -44,26 +44,36 @@ func (c *Client) GetHardwareID() string {
 	return hostname
 }
 
-func (c *Client) Activate(licenseKey string, deviceName string) (map[string]interface{}, error) {
+func (c *Client) Activate(licenseKey string, deviceName string, environmentID string) (map[string]interface{}, error) {
 	payload := map[string]interface{}{
 		"license_key": licenseKey,
 		"device_id":   c.GetHardwareID(),
 		"device_name": deviceName,
 	}
+	if environmentID != "" {
+		payload["environment_id"] = environmentID
+	}
 	return c.post("functions/v1/activate-license", payload)
 }
 
-func (c *Client) Verify(licenseKey string) (map[string]interface{}, error) {
+func (c *Client) Verify(licenseKey string, environmentID string) (map[string]interface{}, error) {
 	deviceID := c.GetHardwareID()
-	cacheKey := fmt.Sprintf("verify:%s:%s", licenseKey, deviceID)
+	envID := environmentID
+	if envID == "" {
+		envID = "default"
+	}
+	cacheKey := fmt.Sprintf("verify:%s:%s:%s", licenseKey, deviceID, envID)
 
 	if val, ok := c.cache[cacheKey]; ok {
 		return val.(map[string]interface{}), nil
 	}
 
 	payload := map[string]interface{}{
-		"license_key": licenseKey,
-		"device_id":   deviceID,
+		"licenseKey": licenseKey,
+		"deviceId":   deviceID,
+	}
+	if environmentID != "" {
+		payload["environmentId"] = environmentID
 	}
 
 	res, err := c.post("functions/v1/verify-license", payload)
@@ -73,10 +83,13 @@ func (c *Client) Verify(licenseKey string) (map[string]interface{}, error) {
 	return res, err
 }
 
-func (c *Client) Deactivate(licenseKey string) (map[string]interface{}, error) {
+func (c *Client) Deactivate(licenseKey string, environmentID string) (map[string]interface{}, error) {
 	payload := map[string]interface{}{
 		"license_key": licenseKey,
 		"device_id":   c.GetHardwareID(),
+	}
+	if environmentID != "" {
+		payload["environment_id"] = environmentID
 	}
 	res, err := c.post("functions/v1/deactivate-license", payload)
 	if err == nil {
