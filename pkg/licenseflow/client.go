@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,25 +19,57 @@ type Config struct {
 	APIKey    string
 	JWTSecret string
 	Timeout   time.Duration
+	CacheTTL  time.Duration // TTL for cached verifications (default 5 min)
+}
+
+type cacheEntry struct {
+	data      map[string]interface{}
+	expiresAt time.Time
 }
 
 type Client struct {
 	config     Config
 	httpClient *http.Client
-	cache      map[string]interface{}
+	cache      map[string]cacheEntry
+	cacheMu    sync.RWMutex
 }
 
 func NewClient(config Config) *Client {
 	if config.Timeout == 0 {
 		config.Timeout = 10 * time.Second
 	}
+	if config.CacheTTL == 0 {
+		config.CacheTTL = 5 * time.Minute
+	}
 	return &Client{
 		config: config,
 		httpClient: &http.Client{
 			Timeout: config.Timeout,
 		},
-		cache: make(map[string]interface{}),
+		cache: make(map[string]cacheEntry),
 	}
+}
+
+func (c *Client) cacheGet(key string) (map[string]interface{}, bool) {
+	c.cacheMu.RLock()
+	defer c.cacheMu.RUnlock()
+	entry, ok := c.cache[key]
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	return entry.data, true
+}
+
+func (c *Client) cacheSet(key string, data map[string]interface{}) {
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+	c.cache[key] = cacheEntry{data: data, expiresAt: time.Now().Add(c.config.CacheTTL)}
+}
+
+func (c *Client) cacheClear() {
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+	c.cache = make(map[string]cacheEntry)
 }
 
 func (c *Client) GetHardwareID() string {
@@ -64,8 +97,8 @@ func (c *Client) Verify(licenseKey string, environmentID string) (map[string]int
 	}
 	cacheKey := fmt.Sprintf("verify:%s:%s:%s", licenseKey, deviceID, envID)
 
-	if val, ok := c.cache[cacheKey]; ok {
-		return val.(map[string]interface{}), nil
+	if val, ok := c.cacheGet(cacheKey); ok {
+		return val, nil
 	}
 
 	payload := map[string]interface{}{
@@ -78,7 +111,7 @@ func (c *Client) Verify(licenseKey string, environmentID string) (map[string]int
 
 	res, err := c.post("functions/v1/verify-license", payload)
 	if err == nil && res["valid"] == true {
-		c.cache[cacheKey] = res
+		c.cacheSet(cacheKey, res)
 	}
 	return res, err
 }
@@ -93,9 +126,56 @@ func (c *Client) Deactivate(licenseKey string, environmentID string) (map[string
 	}
 	res, err := c.post("functions/v1/deactivate-license", payload)
 	if err == nil {
-		c.cache = make(map[string]interface{}) // Clear cache
+		c.cacheClear()
 	}
 	return res, err
+}
+
+// CheckoutLicense acquires a temporary floating license lease
+func (c *Client) CheckoutLicense(licenseKey string, durationSeconds int, requesterID string, requesterType string) (map[string]interface{}, error) {
+	if requesterID == "" {
+		requesterID = c.GetHardwareID()
+	}
+	if requesterType == "" {
+		requesterType = "ci"
+	}
+	payload := map[string]interface{}{
+		"license_key":      licenseKey,
+		"duration_seconds": durationSeconds,
+		"requester_id":     requesterID,
+		"requester_type":   requesterType,
+	}
+	return c.post("functions/v1/checkout-license", payload)
+}
+
+// CheckinLicense releases a floating license lease early
+func (c *Client) CheckinLicense(leaseKey string) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"lease_key": leaseKey,
+	}
+	return c.post("functions/v1/checkin-license", payload)
+}
+
+// GetLeaseStatus checks the status and remaining time of a lease
+func (c *Client) GetLeaseStatus(leaseKey string) (map[string]interface{}, error) {
+	url := fmt.Sprintf("%s/functions/v1/lease-status?lease_key=%s", strings.TrimSuffix(c.config.BaseURL, "/"), leaseKey)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("x-api-key", c.config.APIKey)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.APIKey))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &Error{Message: err.Error(), Code: ErrNetwork}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result, nil
 }
 
 // CheckForUpdates checks for the latest release for a product
