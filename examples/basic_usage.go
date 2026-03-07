@@ -9,7 +9,7 @@ import (
 
 func main() {
 	client := licenseflow.NewClient(licenseflow.Config{
-		BaseURL: "https://api.test",
+		BaseURL: "https://api.licenseflow.dev/v1",
 		APIKey:  "test-api-key",
 	})
 
