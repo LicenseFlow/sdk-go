@@ -21,7 +21,7 @@ import (
 
 func main() {
 	client := licenseflow.NewClient(licenseflow.Config{
-		BaseURL: "https://your-project.supabase.co",
+		BaseURL:   "https://api.licenseflow.dev",
 		APIKey:  "your-api-key",
 	})
 
