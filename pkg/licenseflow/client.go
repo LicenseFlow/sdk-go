@@ -3,6 +3,8 @@ package licenseflow
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -254,14 +256,195 @@ func (c *Client) GetEntitlement(verification map[string]interface{}, featureCode
 	return entitlements[featureCode]
 }
 
-// VerifyOfflineLicense validates a local .lic file
+// ── Credits / Usage-Based Billing ──
+
+// ConsumeCredits consumes credits from the organization's balance
+func (c *Client) ConsumeCredits(amount int, description string, productID string, currency string) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"amount": amount,
+	}
+	if description != "" {
+		payload["description"] = description
+	}
+	if productID != "" {
+		payload["product_id"] = productID
+	}
+	if currency != "" && currency != "credits" {
+		payload["currency"] = currency
+	}
+	return c.post("functions/v1/consume-credits", payload)
+}
+
+// GetCreditsBalance retrieves the credit balance for the organization
+func (c *Client) GetCreditsBalance(productID string, currency string) (map[string]interface{}, error) {
+	params := []string{}
+	if productID != "" {
+		params = append(params, "product_id="+productID)
+	}
+	if currency != "" {
+		params = append(params, "currency="+currency)
+	}
+	query := ""
+	if len(params) > 0 {
+		query = "?" + strings.Join(params, "&")
+	}
+	url := fmt.Sprintf("%s/functions/v1/get-credit-balance%s", strings.TrimSuffix(c.config.BaseURL, "/"), query)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("x-api-key", c.config.APIKey)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.APIKey))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &Error{Message: err.Error(), Code: ErrNetwork}
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result, nil
+}
+
+// ── Entitlements Management ──
+
+// ListEntitlements lists all entitlements for the organization
+func (c *Client) ListEntitlements() ([]map[string]interface{}, error) {
+	url := fmt.Sprintf("%s/functions/v1/manage-entitlements", strings.TrimSuffix(c.config.BaseURL, "/"))
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("x-api-key", c.config.APIKey)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.APIKey))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &Error{Message: err.Error(), Code: ErrNetwork}
+	}
+	defer resp.Body.Close()
+
+	var result []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result, nil
+}
+
+// CreateEntitlement creates a new entitlement definition
+func (c *Client) CreateEntitlement(code string, name string, dataType string) (map[string]interface{}, error) {
+	if dataType == "" {
+		dataType = "boolean"
+	}
+	payload := map[string]interface{}{
+		"code":      code,
+		"name":      name,
+		"data_type": dataType,
+	}
+	return c.post("functions/v1/manage-entitlements", payload)
+}
+
+// DeleteEntitlement deletes an entitlement definition
+func (c *Client) DeleteEntitlement(entitlementID string) (map[string]interface{}, error) {
+	url := fmt.Sprintf("%s/functions/v1/manage-entitlements/%s", strings.TrimSuffix(c.config.BaseURL, "/"), entitlementID)
+	req, _ := http.NewRequest("DELETE", url, nil)
+	req.Header.Set("x-api-key", c.config.APIKey)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.APIKey))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &Error{Message: err.Error(), Code: ErrNetwork}
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result, nil
+}
+
+// AssignEntitlementToLicense assigns an entitlement to a specific license
+func (c *Client) AssignEntitlementToLicense(entitlementID string, licenseID string, value map[string]interface{}) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"license_id": licenseID,
+		"value":      value,
+	}
+	return c.post(fmt.Sprintf("functions/v1/manage-entitlements/%s/assign-to-license", entitlementID), payload)
+}
+
+// AssignEntitlementToPolicy assigns an entitlement to a policy as default
+func (c *Client) AssignEntitlementToPolicy(entitlementID string, policyID string, defaultValue map[string]interface{}) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"policy_id":     policyID,
+		"default_value": defaultValue,
+	}
+	return c.post(fmt.Sprintf("functions/v1/manage-entitlements/%s/assign-to-policy", entitlementID), payload)
+}
+func (c *Client) RecordUsage(licenseKey string, metricName string, value float64, increment bool, environmentID string) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"license_key": licenseKey,
+		"metric_name": metricName,
+		"value":       value,
+		"increment":   increment,
+	}
+	if environmentID != "" {
+		payload["environment_id"] = environmentID
+	}
+	res, err := c.post("functions/v1/record-usage", payload)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		res = make(map[string]interface{})
+	}
+	res["success"] = true
+	return res, nil
+}
+
+// ValidateProofOffline validates a signed JWT proof token offline (HS256)
+func (c *Client) ValidateProofOffline(proof string) (map[string]interface{}, error) {
+	if c.config.JWTSecret == "" {
+		return nil, fmt.Errorf("JWT secret is required for offline validation")
+	}
+
+	parts := strings.Split(proof, ".")
+	if len(parts) != 3 {
+		return map[string]interface{}{"valid": false, "error": "invalid token format"}, nil
+	}
+
+	// Decode payload
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return map[string]interface{}{"valid": false, "error": "invalid payload encoding"}, nil
+	}
+
+	// Verify HMAC-SHA256 signature
+	signingInput := parts[0] + "." + parts[1]
+	expectedSig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return map[string]interface{}{"valid": false, "error": "invalid signature encoding"}, nil
+	}
+
+	mac := hmac.New(sha256.New, []byte(c.config.JWTSecret))
+	mac.Write([]byte(signingInput))
+	computedSig := mac.Sum(nil)
+
+	if !hmac.Equal(expectedSig, computedSig) {
+		return map[string]interface{}{"valid": false, "error": "signature verification failed"}, nil
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return map[string]interface{}{"valid": false, "error": "invalid payload json"}, nil
+	}
+
+	return map[string]interface{}{"valid": true, "payload": payload}, nil
+}
+
+// VerifyOfflineLicense validates a local .lic file using Ed25519 signature
 func (c *Client) VerifyOfflineLicense(licenseContent string, publicKeyHex string) (map[string]interface{}, error) {
 	var licenseData struct {
-		Payload   string `json:"payload"`
-		Signature string `json:"signature"`
+		License   map[string]interface{} `json:"license"`
+		Signature string                 `json:"signature"`
 	}
 	if err := json.Unmarshal([]byte(licenseContent), &licenseData); err != nil {
 		return nil, fmt.Errorf("invalid license format")
+	}
+
+	if licenseData.License == nil || licenseData.Signature == "" {
+		return nil, fmt.Errorf("invalid offline license format: missing license or signature")
 	}
 
 	pubKeyBytes, err := hex.DecodeString(publicKeyHex)
@@ -277,21 +460,26 @@ func (c *Client) VerifyOfflineLicense(licenseContent string, publicKeyHex string
 		return nil, fmt.Errorf("invalid signature base64")
 	}
 
-	valid := ed25519.Verify(pubKeyBytes, []byte(licenseData.Payload), sigBytes)
+	// Serialize the license object to match how the server signed it
+	message, err := json.Marshal(licenseData.License)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize license data")
+	}
+
+	valid := ed25519.Verify(pubKeyBytes, message, sigBytes)
 	if !valid {
 		return nil, fmt.Errorf("invalid signature")
 	}
 
-	payloadBytes, err := base64.StdEncoding.DecodeString(licenseData.Payload)
-	if err != nil {
-		return nil, fmt.Errorf("invalid payload base64")
+	// Check expiration
+	if validUntil, ok := licenseData.License["valid_until"].(string); ok {
+		t, err := time.Parse(time.RFC3339, validUntil)
+		if err == nil && time.Now().After(t) {
+			return nil, fmt.Errorf("offline license has expired")
+		}
 	}
 
-	var payload map[string]interface{}
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return nil, fmt.Errorf("invalid payload json")
-	}
-	return payload, nil
+	return licenseData.License, nil
 }
 
 func (c *Client) post(path string, payload interface{}) (map[string]interface{}, error) {
