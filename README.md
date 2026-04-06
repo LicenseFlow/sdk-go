@@ -1,6 +1,11 @@
-# licenseflow-go
+# LicenseFlow Go SDK
 
-Official Go SDK for LicenseFlow.
+[![Go Reference](https://pkg.go.dev/badge/github.com/licenseflow/go-sdk)](https://pkg.go.dev/github.com/licenseflow/go-sdk)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+**Stop Building Licensing Infrastructure. Start Shipping Software.**
+
+The official Go SDK for [LicenseFlow](https://licenseflow.dev). Protect your intellectual property, enforce entitlements, and manage software distribution with minimal dependencies.
 
 ## Installation
 
@@ -14,91 +19,133 @@ go get github.com/licenseflow/go-sdk
 package main
 
 import (
-	"fmt"
-	"log"
-	"github.com/licenseflow/go-sdk/pkg/licenseflow"
+    "fmt"
+    "log"
+    "github.com/licenseflow/go-sdk/pkg/licenseflow"
 )
 
 func main() {
-	client := licenseflow.NewClient(licenseflow.Config{
-		BaseURL:   "https://api.licenseflow.dev",
-		APIKey:  "your-api-key",
-	})
+    client := licenseflow.NewClient(licenseflow.Config{
+        BaseURL: "https://api.licenseflow.dev",
+        APIKey:  "lf_live_xxxxxxxxxxxx",
+    })
 
-	// 1. Activate License
-	res, err := client.Activate("XXXX-YYYY-ZZZZ-AAAA", "Production Server")
-	if err != nil {
-		log.Fatalf("Activation failed: %v", err)
-	}
-	fmt.Printf("Activated: %v\n", res["success"])
+    res, err := client.Activate("XXXX-YYYY-ZZZZ-AAAA", "Production Server", "")
+    if err != nil {
+        log.Fatalf("Activation failed: %v", err)
+    }
+    fmt.Printf("Activated: %v\n", res["success"])
 
-	// 2. Verify License (Uses internal cache)
-	verify, err := client.Verify("XXXX-YYYY-ZZZZ-AAAA")
-	if err != nil {
-		log.Fatalf("Verification failed: %v", err)
-	}
-	fmt.Printf("Valid: %v\n", verify["valid"])
+    verify, err := client.Verify("XXXX-YYYY-ZZZZ-AAAA", "")
+    if err != nil {
+        log.Fatalf("Verification failed: %v", err)
+    }
+    fmt.Printf("Valid: %v\n", verify["valid"])
+}
+```
+
+---
+
+## API Reference
+
+### Core Methods
+
+| Method | Description |
+|--------|-------------|
+| `Activate(licenseKey, deviceName, envID)` | Activate on a device |
+| `Verify(licenseKey, envID)` | Verify license (cached) |
+| `Deactivate(licenseKey, envID)` | Deactivate from a device |
+| `RecordUsage(licenseKey, metricName, value)` | Track usage metrics |
+| `GetHardwareID()` | Get hostname-based device ID |
+
+### Entitlements
+
+```go
+if client.HasFeature(verification, "ai_features") {
+    enableAI()
+}
+
+val := client.GetEntitlement(verification, "max_seats")
+fmt.Printf("Max seats: %v\n", val)
+```
+
+### Floating Licenses (Leases)
+
+```go
+lease, err := client.CheckoutLicense("XXXX-YYYY", 3600, "ci-runner-1", "ci_runner")
+fmt.Printf("Lease key: %s\n", lease["lease_key"])
+
+err = client.CheckinLicense(lease["lease_key"].(string))
+
+status, err := client.GetLeaseStatus(lease["lease_key"].(string))
+```
+
+### Credits
+
+```go
+result, err := client.ConsumeCredits(100, "AI generation", "", "")
+fmt.Printf("Remaining: %v\n", result["remaining"])
+
+balance, err := client.GetCreditsBalance("", "")
+```
+
+### Release Management
+
+```go
+update, err := client.CheckForUpdates("prod_123", "v1.0.0", "stable")
+if update != nil {
+    download, _ := client.DownloadArtifact("XXXX-YYYY", update["id"].(string), "linux", "amd64")
+    fmt.Printf("Download: %s\n", download["url"])
+}
+```
+
+### Offline Licensing
+
+```go
+content, _ := os.ReadFile("license.lic")
+license, err := client.VerifyOfflineLicense(string(content), "ORG_PUBLIC_KEY_HEX")
+```
+
+### Heartbeat
+
+```go
+client.StartHeartbeat("XXXX-YYYY", 60) // seconds
+defer client.StopHeartbeat()
+```
+
+---
+
+## Error Handling
+
+```go
+import "github.com/licenseflow/go-sdk/pkg/licenseflow"
+
+_, err := client.Activate(key, name, "")
+if err != nil {
+    switch err.(type) {
+    case *licenseflow.RateLimitError:
+        log.Println("Rate limit exceeded")
+    case *licenseflow.InvalidLicenseError:
+        log.Println("Invalid license")
+    default:
+        log.Printf("Error: %v", err)
+    }
 }
 ```
 
 ## Features
 
-- **Standard Library**: Built using Go standard library for minimal dependencies.
-- **Hardware ID**: Automatic hostname identification.
-- **Thread-safe Caching**: Simple in-memory cache for verification.
-- **Strongly Typed Errors**: Handle `RateLimitError` and `InvalidLicenseError` explicitly.
+- **Standard Library** — Minimal dependencies, built on `net/http`
+- **Thread-safe Caching** — Concurrent-safe in-memory verification cache
+- **Environment Scoping** — Isolate licenses per deployment environment
+- **Ed25519 Offline** — Cryptographic offline license verification
 
-## Phase 5: Entitlements
+## License
 
-Check feature access based on license tier:
+MIT
 
-```go
-// Check boolean feature
-if client.HasFeature(verification, "ai_features") {
-    // Enable AI features
-}
+## Links
 
-// Get raw entitlement value
-if val := client.GetEntitlement(verification, "max_seats"); val != nil {
-    fmt.Printf("Max seats: %v\n", val)
-}
-```
-
-## Phase 5: Release Management
-
-Check for updates and download new versions:
-
-```go
-// Check for updates
-update, err := client.CheckForUpdates("prod_123", "v1.0.0", "stable")
-if err != nil {
-    log.Fatal(err)
-}
-
-if update != nil {
-    fmt.Printf("New version: %s\n", update["version"])
-    
-    // Get download URL
-    download, err := client.DownloadArtifact("XXXX-YYYY", update["id"].(string), "windows", "x64")
-    if err == nil {
-        fmt.Printf("Download URL: %s\n", download["url"])
-    }
-}
-```
-
-## Phase 5: Offline Licensing
-
-Verify licenses without internet access:
-
-```go
-// Read license file
-content, _ := os.ReadFile("license.lic") 
-publicKeyHex := "YOUR_ORG_PUBLIC_KEY_HEX"
-
-license, err := client.VerifyOfflineLicense(string(content), publicKeyHex)
-if err != nil {
-    log.Fatalf("Invalid offine license: %v", err)
-}
-
-fmt.Printf("Offline license valid! Customer: %v\n", license["customer_name"])
-```
+- 📖 [Documentation](https://docs.licenseflow.dev)
+- 🐛 [Issues](https://github.com/licenseflow/go-sdk/issues)
+- 🏠 [Homepage](https://licenseflow.dev)
