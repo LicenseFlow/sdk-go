@@ -5,6 +5,18 @@ All notable changes to the LicenseFlow Go SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres on [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.1.0] - 2026-04-06
+
+### Added - Phase 5 Enterprise Finalization
+- **Entitlements**: `HasFeature()` and `GetEntitlement()` helpers.
+- **Release Management**: `CheckForUpdates()` and `DownloadArtifact()`.
+- **Usage Credits**: `ConsumeCredits()` and `GetCreditsBalance()`.
+- **Offline Licensing**: `VerifyOfflineLicense()` with Ed25519 support.
+- **Entitlement Management**: `ListEntitlements()`, `CreateEntitlement()`, `DeleteEntitlement()`, `AssignEntitlementToLicense()`, `AssignEntitlementToPolicy()`.
+
+### Changed
+- Major version bump to align with the cross-platform SDK ecosystem (v2.x).
+
 ## [v0.3.0] - 2026-02-17
 
 ### Added
