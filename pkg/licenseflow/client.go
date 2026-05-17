@@ -355,6 +355,50 @@ func (c *Client) DeleteEntitlement(entitlementID string) (map[string]interface{}
 	return result, nil
 }
 
+// UpdateEntitlement updates an entitlement definition
+func (c *Client) UpdateEntitlement(entitlementID string, updates map[string]interface{}) (map[string]interface{}, error) {
+	url := fmt.Sprintf("%s/functions/v1/manage-entitlements/%s", strings.TrimSuffix(c.config.BaseURL, "/"), entitlementID)
+	body, _ := json.Marshal(updates)
+	req, _ := http.NewRequest("PUT", url, bytes.NewBuffer(body))
+	req.Header.Set("x-api-key", c.config.APIKey)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.APIKey))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &Error{Message: err.Error(), Code: ErrNetwork}
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result, nil
+}
+
+// StartHeartbeat periodically calls Verify in a goroutine. Returns a stop func.
+func (c *Client) StartHeartbeat(licenseKey, environmentID string, interval time.Duration) func() {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	stopCh := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				_, err := c.Verify(licenseKey, environmentID)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "LicenseFlow heartbeat failed: %v\n", err)
+				}
+			}
+		}
+	}()
+	return func() { close(stopCh) }
+}
+
 // AssignEntitlementToLicense assigns an entitlement to a specific license
 func (c *Client) AssignEntitlementToLicense(entitlementID string, licenseID string, value map[string]interface{}) (map[string]interface{}, error) {
 	payload := map[string]interface{}{
