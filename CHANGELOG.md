@@ -7,6 +7,12 @@ and this project adheres on [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v2.1.0] - 2026-04-06
 
+## [v2.2.0] - 2026-05-17
+
+### Added
+- `UpdateEntitlement(id, updates)` PUT helper (parity with JS/Python/PHP/Ruby)
+- `StartHeartbeat(licenseKey, environmentID, interval)` returning a `stop func()` for periodic re-verification
+
 ### Added - Phase 5 Enterprise Finalization
 - **Entitlements**: `HasFeature()` and `GetEntitlement()` helpers.
 - **Release Management**: `CheckForUpdates()` and `DownloadArtifact()`.
