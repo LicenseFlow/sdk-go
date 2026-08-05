@@ -172,21 +172,6 @@ func (c *Client) ResolveForIdentity(email string, productID string, environmentI
 	return res, err
 }
 
-func (c *Client) deactivateLegacy(licenseKey string, environmentID string) (map[string]interface{}, error) {
-	payload := map[string]interface{}{
-		"license_key": licenseKey,
-		"device_id":   c.GetHardwareID(),
-	}
-	if environmentID != "" {
-		payload["environment_id"] = environmentID
-	}
-	res, err := c.post("functions/v1/deactivate-license", payload)
-	if err == nil {
-		c.cacheClear()
-	}
-	return res, err
-}
-
 // CheckoutLicense acquires a temporary floating license lease
 func (c *Client) CheckoutLicense(licenseKey string, durationSeconds int, requesterID string, requesterType string) (map[string]interface{}, error) {
 	if requesterID == "" {
