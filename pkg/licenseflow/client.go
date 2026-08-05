@@ -133,6 +133,60 @@ func (c *Client) Deactivate(licenseKey string, environmentID string) (map[string
 	return res, err
 }
 
+// ResolveForIdentity performs identity-based (keyless) entitlement resolution.
+//
+// It resolves everything an authenticated person is entitled to from their email
+// alone — licenses they own plus any seats assigned to them — without handling a
+// license key. Authenticate the user in your own app or IDP first, then call this
+// from your backend with the verified email. productID and environmentID are
+// optional; pass "" to resolve across all products / the default environment.
+func (c *Client) ResolveForIdentity(email string, productID string, environmentID string) (map[string]interface{}, error) {
+	prod := productID
+	if prod == "" {
+		prod = "all"
+	}
+	envID := environmentID
+	if envID == "" {
+		envID = "default"
+	}
+	cacheKey := fmt.Sprintf("identity:%s:%s:%s", email, prod, envID)
+
+	if val, ok := c.cacheGet(cacheKey); ok {
+		return val, nil
+	}
+
+	payload := map[string]interface{}{
+		"email": email,
+	}
+	if productID != "" {
+		payload["productId"] = productID
+	}
+	if environmentID != "" {
+		payload["environmentId"] = environmentID
+	}
+
+	res, err := c.post("functions/v1/resolve-entitlements", payload)
+	if err == nil && res["resolved"] == true {
+		c.cacheSet(cacheKey, res)
+	}
+	return res, err
+}
+
+func (c *Client) deactivateLegacy(licenseKey string, environmentID string) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"license_key": licenseKey,
+		"device_id":   c.GetHardwareID(),
+	}
+	if environmentID != "" {
+		payload["environment_id"] = environmentID
+	}
+	res, err := c.post("functions/v1/deactivate-license", payload)
+	if err == nil {
+		c.cacheClear()
+	}
+	return res, err
+}
+
 // CheckoutLicense acquires a temporary floating license lease
 func (c *Client) CheckoutLicense(licenseKey string, durationSeconds int, requesterID string, requesterType string) (map[string]interface{}, error) {
 	if requesterID == "" {
