@@ -26,8 +26,10 @@ import (
 
 func main() {
     client := licenseflow.NewClient(licenseflow.Config{
-        BaseURL: "https://api.licenseflow.dev",
-        APIKey:  "lf_live_xxxxxxxxxxxx",
+        BaseURL:      "https://api.licenseflow.dev",
+        APIKey:       "lf_live_xxxxxxxxxxxx",
+        CacheTTL:     5 * time.Minute,   // Cache TTL (default: 5m)
+        GracePeriod:  72 * time.Hour,    // Offline grace (default: 72h)
     })
 
     res, err := client.Activate("XXXX-YYYY-ZZZZ-AAAA", "Production Server", "")
@@ -43,6 +45,36 @@ func main() {
     fmt.Printf("Valid: %v\n", verify["valid"])
 }
 ```
+
+---
+
+## Entitlement Caching
+
+The SDK's `EntitlementCache` (built into the client) uses an in-memory TTL cache with an optional offline grace period. Calls to `Verify` return cached results within the TTL window, avoiding redundant network requests.
+
+```go
+client := licenseflow.NewClient(licenseflow.Config{
+    BaseURL:     "https://api.licenseflow.dev",
+    APIKey:      "lf_live_xxxxxxxxxxxx",
+    CacheTTL:    5 * time.Minute,   // Serve from cache for 5 minutes
+    GracePeriod: 72 * time.Hour,    // Use stale cache for up to 72h when API is down
+})
+
+// First call fetches from API and populates cache
+result, _ := client.Verify("XXXX-YYYY-ZZZZ-AAAA", "")
+
+// Subsequent calls served from memory (zero latency)
+result, _ = client.Verify("XXXX-YYYY-ZZZZ-AAAA", "")
+
+// During outage: cache used within grace window, ErrOfflineGraceExpired after
+```
+
+| Scenario | Result |
+|---|---|
+| Cache hit within TTL | Instant cached response |
+| Cache miss / TTL expired | Live API call, refreshes cache |
+| API down, within grace | Stale cache returned |
+| API down, grace expired | `ErrOfflineGraceExpired` error |
 
 ---
 
@@ -136,9 +168,11 @@ if err != nil {
 ## Features
 
 - **Standard Library** — Minimal dependencies, built on `net/http`
-- **Thread-safe Caching** — Concurrent-safe in-memory verification cache
+- **Thread-safe Caching** — Concurrent-safe in-memory verification cache with configurable TTL
+- **Offline Grace Period** — Continue operating for up to 72h without connectivity
 - **Environment Scoping** — Isolate licenses per deployment environment
 - **Ed25519 Offline** — Cryptographic offline license verification
+- **Goroutine-safe** — All cache operations protected by `sync.RWMutex`
 
 ## License
 
@@ -147,5 +181,5 @@ MIT
 ## Links
 
 - 📖 [Documentation](https://docs.licenseflow.dev)
-- 🐛 [Issues](https://github.com/licenseflow/go-sdk/issues)
+- 🐛 [Issues](https://github.com/LicenseFlow/sdk-go/issues)
 - 🏠 [Homepage](https://licenseflow.dev)
